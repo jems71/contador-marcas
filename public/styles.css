@@ -59,6 +59,12 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+/* Forzar que el atributo hidden siempre funcione, incluso si un elemento
+   tiene display:flex u otro display por mayor especificidad */
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     height: 100%;
     overscroll-behavior: none;
