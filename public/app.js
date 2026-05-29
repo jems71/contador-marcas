@@ -48,8 +48,8 @@
     // (NO recomendado por seguridad), reemplaza /api/count por la URL completa
     // y descomenta el bloque marcado más abajo.
   // Cambia la línea por esta (asegúrate de incluir el https://)
-   const API_ENDPOINT = 'https://jigs-contador-backend-production.up.railway.app/api/v1/count';
-
+   const API_ENDPOINT = '/api/count';
+   
     const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
 
     const loadingPhrases = [
