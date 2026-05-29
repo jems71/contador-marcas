@@ -47,7 +47,8 @@
     // Si por alguna razón quisieras llamar directo a Roboflow desde el frontend
     // (NO recomendado por seguridad), reemplaza /api/count por la URL completa
     // y descomenta el bloque marcado más abajo.
-    const API_ENDPOINT = '/api/count';
+  // Cambia la línea por esta (asegúrate de incluir el https://)
+   const API_ENDPOINT = 'https://jigs-contador-backend-production.up.railway.app/api/v1/count';
 
     const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
 
