@@ -1,7 +1,5 @@
 /* =========================================================
    /api/count — Vercel Serverless (proxy a Railway)
-   Recibe { image, mime } del frontend y lo reenvía
-   a la API YOLO en Railway.
    ========================================================= */
 
 export default async function handler(req, res) {
