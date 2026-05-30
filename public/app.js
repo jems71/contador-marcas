@@ -1,8 +1,10 @@
 /* =========================================================
-   CONTADOR X — Lógica frontend
-   - Captura imagen desde cámara móvil
+   CONTADOR X v1.1 — Lógica frontend con cajas + confianza
+   - Captura imagen desde cámara móvil o galería
    - Convierte a base64
-   - Envía a /api/count (proxy serverless en Vercel)
+   - Envía a /api/count (proxy a Railway)
+   - Dibuja cajas verdes/amarillas/rojas según confianza
+   - Muestra desglose por nivel de confianza
    ========================================================= */
 
 (() => {
@@ -11,21 +13,29 @@
     // ===== Referencias del DOM =====
     const $ = (id) => document.getElementById(id);
 
-    const cameraInput   = $('cameraInput');
-    const captureBtn    = $('captureBtn');
+    const cameraInput    = $('cameraInput');
+    const captureBtn     = $('captureBtn');
     const captureBtnText = $('captureBtnText');
-    const previewFrame  = $('previewFrame');
-    const previewImage  = $('previewImage');
-    const placeholder   = $('placeholder');
-    const countBtn      = $('countBtn');
-    const resultPanel   = $('resultPanel');
-    const loadingMsg    = $('loadingMsg');
-    const totalCount    = $('totalCount');
-    const responseTime  = $('responseTime');
-    const errorMsg      = $('errorMsg');
-    const confChip      = $('confChip');
-    const confValue     = $('confValue');
-    const connStatus    = $('connStatus');
+    const previewFrame   = $('previewFrame');
+    const previewImage   = $('previewImage');
+    const placeholder    = $('placeholder');
+    const canvasWrap     = $('canvasWrap');
+    const overlayCanvas  = $('overlayCanvas');
+    const countBtn       = $('countBtn');
+    const resultPanel    = $('resultPanel');
+    const loadingMsg     = $('loadingMsg');
+    const totalCount     = $('totalCount');
+    const responseTime   = $('responseTime');
+    const errorMsg       = $('errorMsg');
+    const confChip       = $('confChip');
+    const confValue      = $('confValue');
+    const connStatus     = $('connStatus');
+
+    // Desglose de confianza
+    const confBreakdown  = $('confBreakdown');
+    const confHigh       = $('confHigh');
+    const confMid        = $('confMid');
+    const confLow        = $('confLow');
 
     const states = {
         idle:    resultPanel.querySelector('[data-state="idle"]'),
@@ -35,22 +45,19 @@
     };
 
     // ===== Estado de la app =====
-    let imageBase64 = null;   // imagen lista para enviar (sin prefijo data:)
+    let imageBase64 = null;
     let imageMime   = null;
+    let lastPredictions = [];   // guardamos las últimas detecciones para redibujar
     let loadingTimer = null;
 
     // ===== Configuración =====
-    // El endpoint serverless está en /api/count.
-    // Las credenciales viven SOLO en el servidor (variables de entorno en Vercel):
-    //   - ROBOFLOW_API_KEY
-    //   - ROBOFLOW_MODEL_ENDPOINT  (ej: "tu-proyecto/3")
-    // Si por alguna razón quisieras llamar directo a Roboflow desde el frontend
-    // (NO recomendado por seguridad), reemplaza /api/count por la URL completa
-    // y descomenta el bloque marcado más abajo.
-  // Cambia la línea por esta (asegúrate de incluir el https://)
-   const API_ENDPOINT = '/api/count';
-   
-    const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
+    const API_ENDPOINT = '/api/count';
+    const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+    // Umbrales para clasificar confianza
+    const CONF_HIGH_THRESHOLD = 0.80;   // >= 80% = alta
+    const CONF_MID_THRESHOLD  = 0.60;   // 60-80% = media
+                                         //  <60% = baja
 
     const loadingPhrases = [
         'Analizando imagen...',
@@ -89,6 +96,12 @@
         showState('error');
     }
 
+    function clearCanvas() {
+        const ctx = overlayCanvas.getContext('2d');
+        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        lastPredictions = [];
+    }
+
     // ===== Conectividad =====
     function updateConnStatus() {
         if (navigator.onLine) {
@@ -124,25 +137,110 @@
         const reader = new FileReader();
         reader.onload = (ev) => {
             const dataUrl = ev.target.result;
-            // dataUrl = "data:image/jpeg;base64,XXXXX"
             const [meta, base64] = dataUrl.split(',');
             const mimeMatch = meta.match(/data:(.*?);base64/);
             imageMime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
             imageBase64 = base64;
 
             previewImage.src = dataUrl;
-            previewImage.hidden = false;
+            canvasWrap.hidden = false;
             placeholder.hidden = true;
             previewFrame.classList.add('capture__frame--filled');
+
+            // Limpiar cajas previas al cargar nueva imagen
+            clearCanvas();
 
             countBtn.disabled = false;
             captureBtnText.textContent = 'CAMBIAR FOTO';
 
-            // Reset del panel de resultado
             showState('idle');
         };
         reader.onerror = () => setError('No se pudo leer el archivo.');
         reader.readAsDataURL(file);
+    });
+
+    // ===== Dibujar cajas en el canvas =====
+    function drawDetections(predictions, imgWidth, imgHeight) {
+        // Ajustar tamaño del canvas al tamaño real de la imagen
+        overlayCanvas.width = imgWidth;
+        overlayCanvas.height = imgHeight;
+
+        const ctx = overlayCanvas.getContext('2d');
+        ctx.clearRect(0, 0, imgWidth, imgHeight);
+
+        if (!predictions || predictions.length === 0) return;
+
+        // Tamaño de fuente y línea relativo al tamaño de la imagen
+        const baseSize = Math.max(imgWidth, imgHeight);
+        const fontSize = Math.max(12, Math.round(baseSize / 60));
+        const lineWidth = Math.max(2, Math.round(baseSize / 400));
+
+        ctx.font = `bold ${fontSize}px ${getComputedStyle(document.body).fontFamily}`;
+        ctx.lineWidth = lineWidth;
+        ctx.textBaseline = 'top';
+
+        predictions.forEach((det, i) => {
+            // Color según confianza
+            let color, bgColor;
+            if (det.confidence >= CONF_HIGH_THRESHOLD) {
+                color = '#00d97e';       // verde
+                bgColor = 'rgba(0, 217, 126, 0.15)';
+            } else if (det.confidence >= CONF_MID_THRESHOLD) {
+                color = '#f5a524';       // amarillo
+                bgColor = 'rgba(245, 165, 36, 0.15)';
+            } else {
+                color = '#ef4444';       // rojo
+                bgColor = 'rgba(239, 68, 68, 0.2)';
+            }
+
+            // Coordenadas: la API devuelve x,y como CENTRO de la caja
+            const x = det.x - det.width / 2;
+            const y = det.y - det.height / 2;
+            const w = det.width;
+            const h = det.height;
+
+            // Caja con fondo semitransparente
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(x, y, w, h);
+
+            // Borde
+            ctx.strokeStyle = color;
+            ctx.strokeRect(x, y, w, h);
+
+            // Etiqueta con número (arriba a la izquierda de la caja)
+            const label = `#${i + 1}`;
+            const labelPadding = Math.round(fontSize * 0.3);
+            const labelMetrics = ctx.measureText(label);
+            const labelHeight = fontSize + labelPadding * 2;
+            const labelWidth = labelMetrics.width + labelPadding * 2;
+
+            // Posición de la etiqueta: dentro de la caja si está cerca del borde superior
+            let labelY = y - labelHeight;
+            if (labelY < 0) labelY = y;  // si se sale por arriba, ponerla dentro
+
+            ctx.fillStyle = color;
+            ctx.fillRect(x, labelY, labelWidth, labelHeight);
+
+            ctx.fillStyle = '#000';
+            ctx.fillText(label, x + labelPadding, labelY + labelPadding);
+        });
+    }
+
+    function calculateConfidenceBreakdown(predictions) {
+        let high = 0, mid = 0, low = 0;
+        predictions.forEach(det => {
+            if (det.confidence >= CONF_HIGH_THRESHOLD)       high++;
+            else if (det.confidence >= CONF_MID_THRESHOLD)   mid++;
+            else                                              low++;
+        });
+        return { high, mid, low };
+    }
+
+    // Redibujar cuando la imagen termine de cargar (importante para canvas)
+    previewImage.addEventListener('load', () => {
+        if (lastPredictions.length > 0) {
+            drawDetections(lastPredictions, previewImage.naturalWidth, previewImage.naturalHeight);
+        }
     });
 
     // ===== Envío a la API =====
@@ -157,12 +255,12 @@
         }
 
         countBtn.disabled = true;
+        clearCanvas();              // limpiar cajas anteriores
         showState('loading');
         animateLoadingText();
 
         const t0 = performance.now();
 
-        // AbortController para timeout (30 s — los modelos lentos pueden tardar)
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000);
 
@@ -191,7 +289,6 @@
             const data = await res.json();
             const elapsed = Math.round(performance.now() - t0);
 
-            // Esperamos: { count: number, predictions?: Array, avgConfidence?: number }
             const count = typeof data.count === 'number'
                 ? data.count
                 : (Array.isArray(data.predictions) ? data.predictions.length : null);
@@ -211,9 +308,30 @@
                 confChip.hidden = true;
             }
 
+            // === NUEVO: dibujar cajas + desglose ===
+            if (Array.isArray(data.predictions) && data.predictions.length > 0) {
+                lastPredictions = data.predictions;
+
+                // Dibujar sobre la imagen
+                drawDetections(
+                    data.predictions,
+                    previewImage.naturalWidth,
+                    previewImage.naturalHeight
+                );
+
+                // Calcular y mostrar desglose
+                const breakdown = calculateConfidenceBreakdown(data.predictions);
+                confHigh.textContent = breakdown.high;
+                confMid.textContent  = breakdown.mid;
+                confLow.textContent  = breakdown.low;
+                confBreakdown.hidden = false;
+            } else {
+                confBreakdown.hidden = true;
+            }
+
             showState('success');
 
-            // Feedback háptico en móvil cuando se obtiene resultado
+            // Vibración háptica en móvil
             if (navigator.vibrate) navigator.vibrate(80);
 
         } catch (err) {
@@ -229,23 +347,4 @@
             countBtn.disabled = false;
         }
     });
-
-    /* =========================================================
-       OPCIONAL — Llamada directa a Roboflow (NO recomendado)
-       Solo si NO usas el endpoint serverless. Expone tu API key
-       en el navegador, así que úsalo únicamente para pruebas.
-
-       async function callRoboflowDirect(base64) {
-           const ROBOFLOW_API_KEY = "TU_TOKEN_AQUI";
-           const ROBOFLOW_MODEL   = "tu-proyecto/3"; // formato workspace/version
-           const url = `https://detect.roboflow.com/${ROBOFLOW_MODEL}?api_key=${ROBOFLOW_API_KEY}`;
-
-           const res = await fetch(url, {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-               body: base64,
-           });
-           return res.json();
-       }
-       ========================================================= */
 })();
