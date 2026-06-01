@@ -13,8 +13,10 @@
     // ===== Referencias del DOM =====
     const $ = (id) => document.getElementById(id);
 
-    const cameraInput    = $('cameraInput');
-    const captureBtn     = $('captureBtn');
+    const cameraInput    = $('cameraInput');   // galería / archivos (sin capture)
+    const photoInput     = $('photoInput');    // cámara directa (con capture)
+    const captureBtn     = $('captureBtn');    // botón "SUBIR IMAGEN"
+    const photoBtn       = $('photoBtn');      // botón "TOMAR FOTO"
     const captureBtnText = $('captureBtnText');
     const previewFrame   = $('previewFrame');
     const previewImage   = $('previewImage');
@@ -117,11 +119,15 @@
     updateConnStatus();
 
     // ===== Captura de imagen =====
+    // "TOMAR FOTO" abre la cámara directo (en celular). "SUBIR IMAGEN" abre galería/archivos.
+    photoBtn.addEventListener('click', () => {
+        photoInput.click();
+    });
     captureBtn.addEventListener('click', () => {
         cameraInput.click();
     });
 
-    cameraInput.addEventListener('change', (e) => {
+    function handleFileSelect(e) {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
 
@@ -151,13 +157,19 @@
             clearCanvas();
 
             countBtn.disabled = false;
-            captureBtnText.textContent = 'CAMBIAR FOTO';
+            captureBtnText.textContent = 'CAMBIAR IMAGEN';
 
             showState('idle');
         };
         reader.onerror = () => setError('No se pudo leer el archivo.');
         reader.readAsDataURL(file);
-    });
+
+        // Resetear el input para permitir volver a elegir el MISMO archivo
+        e.target.value = '';
+    }
+
+    cameraInput.addEventListener('change', handleFileSelect);
+    photoInput.addEventListener('change', handleFileSelect);
 
     // ===== Dibujar cajas en el canvas =====
     function drawDetections(predictions, imgWidth, imgHeight) {
@@ -348,3 +360,6 @@
         }
     });
 })();
+
+  
+    
